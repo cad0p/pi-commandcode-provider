@@ -359,13 +359,14 @@ describe("streamCommandCode — abort cancels retry loop", () => {
 })
 
 describe("streamCommandCode — retry defaults", () => {
-  it("uses default maxRetries of 0 when not specified", async () => {
+  it("uses default maxRetries of 3 when not specified", async () => {
     server.mockResponse({ type: "error", status: 500, body: "error" })
     const { streamCommandCode } = createTestDeps({ apiBase: server.baseUrl() })
 
     await collectEvents(streamCommandCode(makeModel(), makeContext(), { apiKey: TEST_API_KEY }))
 
-    assert.equal(server.requestCount(), 1)
+    // initial attempt + 3 retries = 4 total
+    assert.equal(server.requestCount(), 4)
   })
 
   it("respects maxRetries: 0 (no retries)", async () => {
