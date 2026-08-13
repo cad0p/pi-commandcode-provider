@@ -15,23 +15,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # pnpm 11 — same install path pi uses for this extension, so an
+      # unapproved build script (ERR_PNPM_IGNORED_BUILDS) fails CI instead
+      # of breaking `pi update` locally.
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
 
   format:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-      - run: npm ci
-      - run: npm run format:check
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run format:check
 
   # ──────────────────────────────────────────────────────────
   # Code-level vulnerability scanning (SAST)
@@ -115,20 +124,23 @@ jobs:
         continue-on-error: true
 
   deps-audit:
-    name: npm audit
+    name: pnpm audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-      - run: npm ci
-      - run: npm audit --audit-level=moderate
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level=moderate
       - name: Exit gracefully on audit findings
         if: failure()
         run: |
-          echo "::warning::npm audit found vulnerabilities. Review and patch before merging."
+          echo "::warning::pnpm audit found vulnerabilities. Review and patch before merging."
 
   # ──────────────────────────────────────────────────────────
   # Postinstall script check — prevents install-time malware
@@ -154,18 +166,37 @@ jobs:
           "
           echo "::endgroup::"
           echo "::group::dependency scripts (top-level)"
-          npm query '.scripts' --all 2>/dev/null | node -e "
-            const d = require('fs').readFileSync('/dev/stdin','utf8');
-            if (!d.trim()) { console.log('No dependency scripts found'); process.exit(0); }
-            let pkgs;
-            try { pkgs = JSON.parse(d); } catch(e) { console.log('Could not parse npm query output'); process.exit(0); }
-            if (!Array.isArray(pkgs)) pkgs = Object.values(pkgs);
-            const withScripts = pkgs.filter(p => p && p.pkgid && p.scripts);
-            withScripts.forEach(p => {
-              const dangerous = ['preinstall','install','postinstall','prepublish','prepare'];
-              const has = Object.keys(p.scripts || {}).filter(s => dangerous.includes(s));
-              if (has.length) console.log('⚠', p.pkgid, 'has scripts:', Object.keys(p.scripts));
-            });
-            if (withScripts.length === 0) console.log('No dependency lifecycle scripts');
-          " 2>&1 || true
+          node -e "
+            const fs = require('fs'), path = require('path');
+            const dangerous = ['preinstall','install','postinstall','prepublish','prepare'];
+            const hits = [];
+            (function walk(dir) {
+              if (!fs.existsSync(dir)) return;
+              for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+                const p = path.join(dir, e.name);
+                if (!e.isDirectory()) continue;
+                if (e.name === 'node_modules') {
+                  for (const e2 of fs.readdirSync(p, { withFileTypes: true })) {
+                    const p2 = path.join(p, e2.name);
+                    if (!e2.isDirectory()) continue;
+                    const pkg = path.join(p2, 'package.json');
+                    if (fs.existsSync(pkg)) {
+                      try {
+                        const j = JSON.parse(fs.readFileSync(pkg, 'utf8'));
+                        const s = j.scripts || {};
+                        const has = Object.keys(s).filter(k => dangerous.includes(k));
+                        if (has.length) hits.push(j.name + '@' + j.version + ' scripts: ' + has.join(','));
+                      } catch (_) {}
+                    }
+                    walk(p2);
+                  }
+                } else walk(p);
+              }
+            })('node_modules/.pnpm');
+            if (hits.length) {
+              hits.forEach(h => console.log('⚠', h));
+            } else {
+              console.log('No dependency lifecycle scripts');
+            }
+          "
           echo "::endgroup::"
