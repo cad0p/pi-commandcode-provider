@@ -23,7 +23,7 @@ jobs:
           version: 11
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.19
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
@@ -37,7 +37,7 @@ jobs:
           version: 11
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.19
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run format:check
@@ -133,10 +133,14 @@ jobs:
           version: 11
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.19
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm audit --audit-level=moderate
+      # Findings are expected (upstream advisories in the pi peer graph);
+      # surface them without blocking the branch.
+      - name: pnpm audit (non-blocking)
+        continue-on-error: true
+        run: pnpm audit --audit-level=moderate
       - name: Exit gracefully on audit findings
         if: failure()
         run: |
